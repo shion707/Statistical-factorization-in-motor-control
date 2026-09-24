@@ -30,8 +30,9 @@ from common import COLOUR, PALE, load, style, label, show
 from Exp1_2 import CONDITIONS, SIMPLE_HALF, simple_rt, summarize
 
 
-LR, SD2, SD = 0.00439, 1.1394, 3.3321      # learning rate, field width, evidence width
-VAL_CAP, FORGET = 0.0727799792, 0.1        # ceiling and decay of the value field
+LR, SD2, SD = 9.7555556e-5, 1.1394, 3.3321  # learning rate, field width, evidence width
+VAL_CAP, FORGET = 0.0727799792, 0.99       # ceiling of the value field, and the fraction of it
+                                           # kept from one trial to the next.  
 BOUND, RATE = 0.015, 0.00005               # decision boundary, evidence per step
 NOISE = RATE * 1.4506                      # noise per step
 COLLAPSE = 0.000089                        # boundary decay per step, free responses only
@@ -64,7 +65,7 @@ def value_field(prior):
     """
     targets = np.radians(np.arange(prior) - prior / 2)
     drive = sum(np.exp(SD2 * np.cos(DIRECTION - t)) for t in targets)
-    drive *= 2 / (prior * 2 * np.pi * np.i0(SD2))
+    drive *= 1 / (prior * 2 * np.pi * np.i0(SD2))  # E(u): von Mises density averaged over the prior
     field = LR * drive / ((1 - FORGET) + LR * drive / VAL_CAP)
     return field + field.max() * 0.5           # units are never completely silent
 

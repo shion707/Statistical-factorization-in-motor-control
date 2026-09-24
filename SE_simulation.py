@@ -19,8 +19,7 @@ STRENGTH_GRID = np.arange(0, 24.02, .05)
 STRENGTH_SWEEP = np.arange(0, 15.02, .25)
 CENTRES = np.arange(-9, 10) * BIN
 
-# Derivative-of-Gaussian kernel, as reported in the Methods.
-AMP, SIGMA = 1.05, 36.0
+SIGMA = 36.0            # width of the derivative-of-Gaussian kernel, degrees
 
 # prior -> (data condition, bias slope measured by Exp1_2.py, polynomial order used when the
 # simulated responses are analysed like the data in panel f)
@@ -29,30 +28,26 @@ CONDITIONS = {"Wide": ("d180", 0.040, 20), "Medium": ("d120", 0.059, 15),
 COLOUR = {"Wide": "#2e9e8f", "Medium": "#e0821e", "Narrow": "#3b5a9a"}
 
 # Panels a-c compare three fixed strengths of the sequential effect; d-f sweep it.
-OBSERVED = 7.9                                   # the strength observed in Exp 1
+OBSERVED = 7.9                                   # the strength observed in Exp 1 (peak 1.47°)
 STRENGTHS = (0.0, OBSERVED, 2 * OBSERVED)
 STRENGTH_LABEL = ("no SE", "Observed SE", "2 × Observed SE")
 STRENGTH_COLOUR = ("#f4b8c0", "#c2559b", "#5c3b9c")
 
 
-def kernel(delta, amp, sigma):
-    """Derivative of a Gaussian, scaled so its peak is `amp` degrees."""
-    return amp * (delta / sigma) * np.exp(-(delta ** 2) / (2 * sigma ** 2) + 0.5)
+def kernel(delta, sigma):
+    """The sequential-effect kernel at strength 1: 1000 times the derivative of a Gaussian
+    density with SD `sigma`, signed so that a positive strength is repulsive.  `delta` is the
+    current target minus the previous one."""
+    return 1000 * delta / (np.sqrt(2 * np.pi) * sigma ** 3) * np.exp(-(delta ** 2) / (2 * sigma ** 2))
 
 
 def unit_peak(sigma):
-    """Peak of the unit derivative-of-Gaussian the strength parameter multiplies."""
+    """Peak of the kernel at strength 1, in degrees, reached at |delta| = sigma."""
     return 1000 * np.exp(-0.5) / (np.sqrt(2 * np.pi) * sigma ** 2)
 
 
-def gain_of(strength, amp, sigma):
-    """The kernel multiplier this simulation works in, for a given SE strength."""
-    return strength * unit_peak(sigma) / amp
-
-
 def se_function(target_index, error, order):
-    """The sequential-effect function, measured as in the data: polynomial detrending, a
-    3-SD trim, 20-degree ΔTarget bins and a 2.5-SD trim within each bin."""
+    """The sequential-effect function, measured as in the data"""
     dev = common.remove_outliers_2d(common.detrend(target_index, error, order), 3)
     change = np.full_like(target_index, np.nan, dtype=float)
     change[1:] = target_index[:-1] - target_index[1:]
@@ -79,26 +74,26 @@ def load(condition):
     return target, index, error, change
 
 
-def simulate(target, change, slope, strength, amp, sigma):
+def simulate(target, change, slope, strength, sigma):
     """Responses under this central tendency and this much sequential effect."""
-    return target * (1 - slope) + strength * kernel(change, amp, sigma)
+    return target * (1 - slope) + strength * kernel(change, sigma)
 
 
-def analyse(amp, sigma):
-    grid = gain_of(STRENGTH_GRID, amp, sigma)
+def analyse(sigma):
+    grid = STRENGTH_GRID
     out = {}
     for name, (condition, slope, order) in CONDITIONS.items():
         target, index, error, change = load(condition)
         ok = np.isfinite(target) & np.isfinite(change)
-        bias_error, effect = slope * target[ok], kernel(change[ok], amp, sigma)
+        bias_error, effect = slope * target[ok], kernel(change[ok], sigma)
         curve = np.sqrt(np.mean((bias_error[None, :] - grid[:, None] * effect[None, :]) ** 2, 1))
         out[name] = dict(strength=STRENGTH_GRID, curve=curve, target=target, index=index,
                          change=change, slope=slope, order=order)
     return out
 
 
-def bias_and_variance(entry, strength, amp, sigma):
-    response = simulate(entry["target"], entry["change"], entry["slope"], strength, amp, sigma)
+def bias_and_variance(entry, strength, sigma):
+    response = simulate(entry["target"], entry["change"], entry["slope"], strength, sigma)
     targets = np.unique(entry["target"][np.isfinite(entry["target"])])
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -107,17 +102,16 @@ def bias_and_variance(entry, strength, amp, sigma):
     return targets, targets - mean, np.nanmean(np.abs(targets - mean)), np.nanmean(var)
 
 
-def recovered(amp, sigma, results):
+def recovered(sigma, results):
     """Panel f: the same constant kernel, measured in each prior condition.
 
     The kernel is drawn at the observed strength, the same one panels a-e call "Observed
     SE", so panel f recovers the effect that panel e marks as the operating point.
     """
     out = {}
-    gain = gain_of(OBSERVED, amp, sigma)
     for name, (condition, slope, order) in CONDITIONS.items():
         entry = results[name]
-        response = simulate(entry["target"], entry["change"], slope, gain, amp, sigma)
+        response = simulate(entry["target"], entry["change"], slope, OBSERVED, sigma)
         measured = se_function(entry["index"], response - entry["target"], order)
         with warnings.catch_warnings():          # bins wider than the range are empty
             warnings.simplefilter("ignore", RuntimeWarning)
@@ -125,7 +119,7 @@ def recovered(amp, sigma, results):
     return out
 
 
-def make_figure(amp, sigma, results, recovered_functions):
+def make_figure(sigma, results, recovered_functions):
     common.style()
     fig = plt.figure(figsize=(11.4, 6.8))
     # Two rows of unequal panel counts, so each gets its own subfigure and its own spacing.
@@ -150,7 +144,7 @@ def make_figure(amp, sigma, results, recovered_functions):
     delta = np.linspace(-180, 180, 400)
     for strength, colour, name in zip(STRENGTHS[::-1], STRENGTH_COLOUR[::-1],
                                       STRENGTH_LABEL[::-1]):
-        ax.plot(delta, gain_of(strength, amp, sigma) * kernel(delta, amp, sigma),
+        ax.plot(delta, strength * kernel(delta, sigma),
                 color=colour, lw=2, label=name)
     ax.set(xlim=(-180, 180), ylim=(-4.3, 4.3), xticks=[], yticks=[],
            xlabel="ΔTarget", ylabel="Deviation", title="Repulsive effect")
@@ -160,7 +154,7 @@ def make_figure(amp, sigma, results, recovered_functions):
     ax = upper[2]
     common.label(ax, "b", x=-.28)
     for strength, colour in zip(STRENGTHS, STRENGTH_COLOUR):
-        targets, bias, _, _ = bias_and_variance(wide, gain_of(strength, amp, sigma), amp, sigma)
+        targets, bias, _, _ = bias_and_variance(wide, strength, sigma)
         ax.plot(targets, bias, color=colour, lw=2)
     ax.axhline(0, color="k", lw=.6, ls="--")
     ax.axvline(0, color="k", lw=.6, ls="--")
@@ -181,8 +175,7 @@ def make_figure(amp, sigma, results, recovered_functions):
     # d. bias falls and variance grows with the strength of the sequential effect
     ax = lower[0]
     common.label(ax, "d", x=-.17)
-    sweep = gain_of(STRENGTH_SWEEP, amp, sigma)
-    measured = [bias_and_variance(results["Wide"], s, amp, sigma) for s in sweep]
+    measured = [bias_and_variance(results["Wide"], s, sigma) for s in STRENGTH_SWEEP]
     ax.plot(STRENGTH_SWEEP, [m[2] for m in measured], color="k", lw=2)
     twin = ax.twinx()
     twin.plot(STRENGTH_SWEEP, [m[3] for m in measured], color="#c0392b", lw=2)
@@ -217,8 +210,8 @@ def make_figure(amp, sigma, results, recovered_functions):
 
 
 def main():
-    results = analyse(AMP, SIGMA)
-    common.show(make_figure(AMP, SIGMA, results, recovered(AMP, SIGMA, results)),
+    results = analyse(SIGMA)
+    common.show(make_figure(SIGMA, results, recovered(SIGMA, results)),
                 "SE_simulation")
 
 
